@@ -73,37 +73,47 @@ function VideoUploadPage() {
 
   /* -------------------- Upload + Progress -------------------- */
   const handleSubmit = async () => {
-    setLoading(true);
-    setProgress(0);
+  if (!file && !url) return;
+  setLoading(true);
+  setProgress(0);
 
-    const formData = new FormData();
-    if (file) formData.append("video", file);
-    if (url) formData.append("videoUrl", url);
+  if (file) {
+    // 1️⃣ Get presigned URL from server
+    const res = await fetch("/api/s3-upload", {
+      method: "POST",
+      body: JSON.stringify({ fileName: file.name, fileType: file.type }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const { url: presignedUrl, key } = await res.json();
 
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/process-video");
+    // 2️⃣ Upload directly to S3
+    await fetch(presignedUrl, {
+      method: "PUT",
+      body: file,
+      headers: { "Content-Type": file.type },
+    });
 
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) {
-        setProgress(Math.round((event.loaded / event.total) * 100));
-      }
-    };
+    toast({ title: "Upload complete", description: "Video uploaded to S3", variant: "success" });
 
-    xhr.onload = () => {
-      const res = JSON.parse(xhr.responseText);
-      setJobId(res.jobId);
-      setStatus("queued");
-      toast({ title: "Upload complete", description: "Processing started", variant: "success" });
-      setLoading(false);
-    };
+    // 3️⃣ Optionally trigger your processing job with S3 key
+    const jobRes = await fetch("/api/process-video", {
+      method: "POST",
+      body: JSON.stringify({ s3Key: key }),
+      headers: { "Content-Type": "application/json" },
+    });
 
-    xhr.onerror = () => {
-      toast({ title: "Upload failed", variant: "destructive" });
-      setLoading(false);
-    };
+    const { jobId } = await jobRes.json();
+    setJobId(jobId);
+    setStatus("queued");
+  }
 
-    xhr.send(formData);
-  };
+  if (url) {
+    // Handle URL-based processing as before
+  }
+
+  setLoading(false);
+};
+
 
   /* -------------------- Polling -------------------- */
   useEffect(() => {
